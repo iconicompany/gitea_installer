@@ -42,7 +42,7 @@ echo "-f FQDN - Systemname of GITEA system"
 echo "-e EMAIL - E-Mail for letsencrypt"
 echo "-i IP - IPv4 address of this system"
 echo "-p PASSWORD - Used for GITEA DB"
-echo "-r SQLROOT - MySQL ROOT password"
+echo "-r SQLROOT - Postgres ROOT password"
 echo "-l LETSENCRYPT - Use letsencrypt"
 echo "-u UFW - Use UFW"
 exit
@@ -58,7 +58,7 @@ fi
 
 # Install packages
 apt update
-apt install -y nginx mariadb-server git ssl-cert
+apt install -y nginx postgresql postgresql-client git ssl-cert
 
 # Get last version
 VER=$(curl --silent "https://api.github.com/repos/go-gitea/gitea/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/' | sed 's|[v,]||g' )                                               
@@ -99,171 +99,20 @@ chmod 770 /etc/gitea
 curl -fsSL -o /etc/systemd/system/gitea.service https://raw.githubusercontent.com/go-gitea/gitea/master/contrib/systemd/gitea.service
 
 # Enable mariadb requirement in systemd gitea.service script
-perl -pi -w -e 's/#Requires=mariadb.service/Requires=mariadb.service/g;' /etc/systemd/system/gitea.service
+perl -pi -w -e 's/#Requires=postgresql.service/Requires=postgresql.service/g;' /etc/systemd/system/gitea.service
 
 # Reload & Enable gitea daemon
 systemctl daemon-reload
 systemctl enable --now gitea
 
 # Create db in mariadb
-mysql -u root -Bse "CREATE DATABASE giteadb;"
-mysql -u root -Bse "CREATE USER 'gitea'@'localhost' IDENTIFIED BY '$PASSWORD';"
-mysql -u root -Bse "GRANT ALL ON giteadb.* TO 'gitea'@'localhost' IDENTIFIED BY '$PASSWORD' WITH GRANT OPTION;"
-mysql -u root -Bse "ALTER DATABASE giteadb CHARACTER SET = utf8mb4 COLLATE utf8mb4_unicode_ci;"
-mysql -u root -Bse "FLUSH PRIVILEGES;"
-
-# Save original config
-cp /etc/mysql/mariadb.conf.d/50-server.cnf /etc/mysql/mariadb.conf.d/50-server.org
-
-cat >> /etc/mysql/mariadb.conf.d/50-server.cnf << XYZ
-#
-# These groups are read by MariaDB server.
-# Use it for options that only the server (but not clients) should see
-#
-# See the examples of server my.cnf files in /usr/share/mysql
-
-# this is read by the standalone daemon and embedded servers
-[server]
-
-# this is only for the mysqld standalone daemon
-[mysqld]
-
-#
-# * Basic Settings
-#
-user                    = mysql
-pid-file                = /run/mysqld/mysqld.pid
-socket                  = /run/mysqld/mysqld.sock
-#port                   = 3306
-basedir                 = /usr
-datadir                 = /var/lib/mysql
-tmpdir                  = /tmp
-lc-messages-dir         = /usr/share/mysql
-#skip-external-locking
-
-# Instead of skip-networking the default is now to listen only on
-# localhost which is more compatible and is not less secure.
-bind-address            = 127.0.0.1
-
-#
-# * Fine Tuning
-#
-#key_buffer_size        = 16M
-#max_allowed_packet     = 16M
-#thread_stack           = 192K
-#thread_cache_size      = 8
-# This replaces the startup script and checks MyISAM tables if needed
-# the first time they are touched
-#myisam_recover_options = BACKUP
-#max_connections        = 100
-#table_cache            = 64
-#thread_concurrency     = 10
-
-#
-# * Query Cache Configuration
-#
-#query_cache_limit      = 1M
-query_cache_size        = 16M
-
-#
-# * Logging and Replication
-#
-# Both location gets rotated by the cronjob.
-# Be aware that this log type is a performance killer.
-# As of 5.1 you can enable the log at runtime!
-#general_log_file       = /var/log/mysql/mysql.log
-#general_log            = 1
-#
-# Error log - should be very few entries.
-#
-log_error = /var/log/mysql/error.log
-#
-# Enable the slow query log to see queries with especially long duration
-#slow_query_log_file    = /var/log/mysql/mariadb-slow.log
-#long_query_time        = 10
-#log_slow_rate_limit    = 1000
-#log_slow_verbosity     = query_plan
-#log-queries-not-using-indexes
-#
-# The following can be used as easy to replay backup logs or for replication.
-# note: if you are setting up a replication slave, see README.Debian about
-#       other settings you may need to change.
-#server-id              = 1
-#log_bin                = /var/log/mysql/mysql-bin.log
-expire_logs_days        = 10
-#max_binlog_size        = 100M
-#binlog_do_db           = include_database_name
-#binlog_ignore_db       = exclude_database_name
-
-#
-# * Security Features
-#
-# Read the manual, too, if you want chroot!
-#chroot = /var/lib/mysql/
-#
-# For generating SSL certificates you can use for example the GUI tool "tinyca".
-#
-#ssl-ca = /etc/mysql/cacert.pem
-#ssl-cert = /etc/mysql/server-cert.pem
-#ssl-key = /etc/mysql/server-key.pem
-#
-# Accept only connections using the latest and most secure TLS protocol version.
-# ..when MariaDB is compiled with OpenSSL:
-#ssl-cipher = TLSv1.2
-# ..when MariaDB is compiled with YaSSL (default in Debian):
-#ssl = on
-
-#
-# * Character sets
-#
-# MySQL/MariaDB default is Latin1, but in Debian we rather default to the full
-# utf8 4-byte character set. See also client.cnf
-#
-character-set-server  = utf8mb4
-collation-server      = utf8mb4_general_ci
-
-#
-# * InnoDB
-#
-# InnoDB is enabled by default with a 10MB datafile in /var/lib/mysql/.
-# Read the manual for more InnoDB related options. There are many!
-
-innodb_file_format = Barracuda
-innodb_large_prefix = 1
-innodb_default_row_format = dynamic
-
-#
-# * Unix socket authentication plugin is built-in since 10.0.22-6
-#
-# Needed so the root database user can authenticate without a password but
-# only when running as the unix root user.
-#
-# Also available for other users if required.
-# See https://mariadb.com/kb/en/unix_socket-authentication-plugin/
-
-# this is only for embedded server
-[embedded]
-
-# This group is only read by MariaDB servers, not by MySQL.
-# If you use the same .cnf file for MySQL and MariaDB,
-# you can put MariaDB-only options here
-[mariadb]
-
-# This group is only read by MariaDB-10.3 servers.
-# If you use the same .cnf file for MariaDB of different versions,
-# use this group for options that older servers don't understand
-[mariadb-10.3]
-XYZ
-
-#Restart mariadb
-systemctl restart mariadb
-
-#Secure mariadb
-mysql -u root -Bse "UPDATE mysql.user SET Password=PASSWORD('$SQLROOT') WHERE User='root'"
-mysql -u root -p"$SQLROOT" -Bse "DELETE FROM mysql.user WHERE User='root' AND Host NOT IN ('localhost', '127.0.0.1', '::1')"
-mysql -u root -p"$SQLROOT" -Bse "DELETE FROM mysql.user WHERE User=''"
-mysql -u root -p"$SQLROOT" -Bse "DELETE FROM mysql.db WHERE Db='test' OR Db='test\_%'"
-mysql -u root -p"$SQLROOT" -Bse "FLUSH PRIVILEGES"
+sudo -u postgres psql << EOT
+DROP DATABASE IF EXISTS gitea;
+DROP USER IF EXISTS gitea;
+create database gitea;
+CREATE USER gitea WITH PASSWORD '${DB_PASSWORD}';
+GRANT ALL PRIVILEGES ON DATABASE gitea to gitea;
+EOT
 
 # Create nginx config
 cat >> /etc/nginx/sites-enabled/$FQDN << XYZ
@@ -342,13 +191,9 @@ fi
 echo "--------------------------------------------------------------------------------------"
 echo " GITEA $VER installed on system $FQDN"
 echo "--------------------------------------------------------------------------------------"
-echo " Mysql database        : giteadb "
-echo " Mysql user            : gitea "
-echo " Mysql password        : $PASSWORD "
-echo " Mysql character set   : utf8mb4"
-echo "--------------------------------------------------------------------------------------"
-echo " Mysql root user       : root"
-echo " Mysql root password   : $SQLROOT"
+echo " Postgres database        : gitea "
+echo " Postgres user            : gitea "
+echo " Postgres password        : $PASSWORD "
 echo "--------------------------------------------------------------------------------------"
 echo " System is accessable via https://$FQDN"
 echo "--------------------------------------------------------------------------------------"
